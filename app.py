@@ -1,306 +1,389 @@
-# ==========================================================
-# AI PLAGIARISM DETECTOR PRO
-# Human-friendly, explainable & demo-ready version
-# ==========================================================
+# =========================================================
+# AI POWERED PLAGIARISM DETECTION SYSTEM
+# Mini / Final Year Project
+# =========================================================
 
-# ================== IMPORTS ==================
-import streamlit as st
-import nltk
-import string
-import time
-import base64
-import requests
-import io
 
-import PyPDF2
-from PIL import Image
+# ---------------------------------------------------------
+# IMPORT REQUIRED LIBRARIES
+# ---------------------------------------------------------
 
+import streamlit as st              # For creating web application
+import nltk                         # For NLP tasks
+import string                       # To remove punctuation
+import time                         # For progress animation
+import base64, io                   # For background image handling
+import PyPDF2                       # To read PDF files
+from PIL import Image               # Image processing
+from datetime import datetime       # For report date & time
+
+# NLP utilities
 from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize
+
+# AI / ML libraries
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from streamlit_lottie import st_lottie
+
+# PDF report generation
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4
 
 
-# ================== PAGE CONFIG ==================
+# ---------------------------------------------------------
+# STREAMLIT PAGE CONFIGURATION
+# ---------------------------------------------------------
+
 st.set_page_config(
-    page_title="AI Plagiarism Detector Pro",
+    page_title="AI Plagiarism Detector",
+    page_icon="🧠",
     layout="wide"
 )
 
 
-# ================== NLTK SETUP (SAFE & CACHED) ==================
+# ---------------------------------------------------------
+# DOWNLOAD REQUIRED NLTK DATA
+# ---------------------------------------------------------
+# Stopwords and sentence tokenizer are required for NLP
+
 @st.cache_resource
-def setup_nltk():
-    """
-    Download required NLTK resources only once.
-    Prevents repeated downloads on every app reload.
-    """
+def download_nltk_data():
     nltk.download("stopwords")
     nltk.download("punkt")
 
-setup_nltk()
+download_nltk_data()
 
 
-# ================== IMAGE OPTIMIZATION ==================
-def load_background_image(path, max_width=1600, quality=70):
-    """
-    Loads background image, resizes it for performance,
-    and converts it into base64 for Streamlit CSS usage.
-    """
-    img = Image.open(path).convert("RGB")
+# ---------------------------------------------------------
+# BACKGROUND IMAGE LOADING & OPTIMIZATION
+# ---------------------------------------------------------
+# This function loads and compresses background image
+# so that the web app loads faster
 
-    if img.width > max_width:
-        ratio = max_width / img.width
-        img = img.resize((max_width, int(img.height * ratio)))
+def load_background_image(path, max_width=1600):
+    image = Image.open(path).convert("RGB")
+
+    # Resize image if too large
+    if image.width > max_width:
+        ratio = max_width / image.width
+        image = image.resize((max_width, int(image.height * ratio)))
 
     buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=quality, optimize=True)
+    image.save(buffer, format="JPEG", quality=70, optimize=True)
+
+    # Convert image to base64 format
     return base64.b64encode(buffer.getvalue()).decode()
 
 
-# ================== SIDEBAR : THEME SELECTION ==================
-st.sidebar.title("🎨 Appearance Settings")
+# ---------------------------------------------------------
+# THEME SELECTION (LIGHT / DARK)
+# ---------------------------------------------------------
 
-theme = st.sidebar.radio(
-    "Choose app theme",
-    ["Dark", "Light"],
-    help="Change background style for better readability"
-)
+theme = st.sidebar.radio("🌗 Theme", ["Dark", "Light"])
 
-bg_path = "bg_dark.jpg" if theme == "Dark" else "bg_light.jpg"
-bg_image = load_background_image(bg_path)
+if theme == "Dark":
+    background_image = load_background_image("bg_dark.jpg")
+else:
+    background_image = load_background_image("bg_light.jpg")
 
 
-# ================== GLOBAL STYLING ==================
+# ---------------------------------------------------------
+# CUSTOM CSS FOR UI + MOBILE OPTIMIZATION
+# ---------------------------------------------------------
+
 st.markdown(f"""
 <style>
 
-/* App background with readability overlay */
+/* Background with dark overlay for readability */
 .stApp {{
     background-image:
         linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)),
-        url("data:image/jpg;base64,{bg_image}");
+        url("data:image/jpg;base64,{background_image}");
     background-size: cover;
     background-position: center;
-    background-attachment: fixed;
 }}
 
 /* Headings */
-h1, h2, h3, h4 {{
+h1,h2,h3,h4 {{
     color: #f8fafc !important;
     text-shadow: 0 2px 6px rgba(0,0,0,0.7);
 }}
 
-/* Text */
-p, label, span, div {{
+/* Text color */
+p,label,span,div {{
     color: #e5e7eb !important;
 }}
 
-/* Glass-style cards */
+/* Glass card style */
 .glass {{
-    background: rgba(2, 6, 23, 0.94);
+    background: rgba(2,6,23,0.94);
     border-radius: 18px;
     padding: 22px;
-    margin-bottom: 16px;
+    margin-bottom: 18px;
     box-shadow: 0 12px 35px rgba(0,0,0,0.45);
     border: 1px solid rgba(255,255,255,0.06);
-    transition: transform 0.3s ease;
 }}
 
-.glass:hover {{
-    transform: scale(1.02);
+/* Grade colors */
+.green {{ color: #22c55e; font-weight: bold; }}
+.yellow {{ color: #eab308; font-weight: bold; }}
+.orange {{ color: #f97316; font-weight: bold; }}
+.red {{ color: #ef4444; font-weight: bold; }}
+
+/* Mobile optimization */
+@media (max-width: 768px) {{
+    h1 {{ font-size: 26px !important; }}
+    h2 {{ font-size: 22px !important; }}
+    h3 {{ font-size: 18px !important; }}
+
+    .glass {{
+        padding: 18px !important;
+    }}
+
+    button {{
+        width: 100% !important;
+        padding: 12px !important;
+        font-size: 16px !important;
+    }}
 }}
 
 </style>
 """, unsafe_allow_html=True)
 
 
-# ================== HEADER SECTION ==================
-left, right = st.columns([2, 1])
+# ---------------------------------------------------------
+# LOAD AI MODEL (BERT)
+# ---------------------------------------------------------
+# Using pre-trained sentence transformer model
 
-with left:
-    st.markdown("<h1>AI-Powered Plagiarism Detection System</h1>", unsafe_allow_html=True)
-    st.markdown("<h3>Semantic Similarity • NLP • Deep Learning</h3>", unsafe_allow_html=True)
-    st.markdown(
-        "Upload two documents and let AI intelligently check **how similar they really are**."
-    )
+@st.cache_resource
+def load_ai_model():
+    return SentenceTransformer("paraphrase-MiniLM-L3-v2")
 
-with right:
-    lottie_url = "https://assets9.lottiefiles.com/packages/lf20_jcikwtux.json"
-    st_lottie(requests.get(lottie_url).json(), height=220)
-
-st.divider()
+bert_model = load_ai_model()
 
 
-# ================== CORE NLP UTILITIES ==================
+# ---------------------------------------------------------
+# TEXT PREPROCESSING FUNCTION
+# ---------------------------------------------------------
+# Removes unnecessary words and symbols
+
 def preprocess_text(text):
-    """
-    Cleans text for better semantic comparison:
-    - Lowercase
-    - Remove punctuation
-    - Remove stopwords
-    """
-    text = text.lower()
-    text = "".join(c for c in text if c not in string.punctuation)
+    text = text.lower()  # convert to lowercase
+    text = "".join(ch for ch in text if ch not in string.punctuation)
 
     words = text.split()
-    filtered_words = [w for w in words if w not in stopwords.words("english")]
+    filtered_words = [
+        word for word in words
+        if word not in stopwords.words("english")
+    ]
 
     return " ".join(filtered_words)
 
 
-def extract_text(file):
-    """
-    Reads text from PDF or TXT files safely.
-    """
-    if file.type == "application/pdf":
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            if page.extract_text():
-                text += page.extract_text()
-        return text
-    else:
-        return file.read().decode("utf-8", "ignore")
+# ---------------------------------------------------------
+# PDF READING FUNCTION
+# ---------------------------------------------------------
+
+def extract_text_from_pdf(file):
+    reader = PyPDF2.PdfReader(file)
+    full_text = ""
+
+    for page in reader.pages:
+        if page.extract_text():
+            full_text += page.extract_text()
+
+    return full_text
 
 
-# ================== AI MODEL LOADING ==================
-@st.cache_resource(show_spinner=False)
-def load_ai_model():
-    """
-    Loads sentence transformer model only once.
-    """
-    return SentenceTransformer("paraphrase-MiniLM-L3-v2")
+# ---------------------------------------------------------
+# PLAGIARISM GRADING FUNCTION
+# ---------------------------------------------------------
 
-model = load_ai_model()
-
-
-# ================== RESULT INTERPRETATION ==================
-def plagiarism_grade(score):
+def get_plagiarism_grade(score):
     if score <= 20:
-        return "🟢 Grade A – Original Content"
+        return "A", "green"
     elif score <= 40:
-        return "🟡 Grade B – Minor Similarity"
+        return "B", "yellow"
     elif score <= 70:
-        return "🟠 Grade C – Moderate Plagiarism"
+        return "C", "orange"
     else:
-        return "🔴 Grade D – High Plagiarism"
+        return "D", "red"
 
 
-def status_badge(score):
-    if score <= 20:
-        return "Content appears original."
-    elif score <= 40:
-        return "Low similarity detected."
-    elif score <= 70:
-        return "Moderate similarity detected."
-    else:
-        return "High plagiarism detected."
+# ---------------------------------------------------------
+# SENTENCE LEVEL PLAGIARISM CHECK
+# ---------------------------------------------------------
+# This function compares each sentence semantically
 
+def sentence_level_comparison(text1, text2, threshold):
+    sentences_1 = sent_tokenize(text1)
+    sentences_2 = sent_tokenize(text2)
 
-# ================== SENTENCE LEVEL ANALYSIS ==================
-def sentence_level_matches(text1, text2, threshold):
-    s1 = sent_tokenize(text1)
-    s2 = sent_tokenize(text2)
+    embeddings_1 = bert_model.encode(sentences_1)
+    embeddings_2 = bert_model.encode(sentences_2)
 
-    emb1 = model.encode(s1)
-    emb2 = model.encode(s2)
+    results = []
 
-    matches = []
-
-    for i, e1 in enumerate(emb1):
-        scores = cosine_similarity([e1], emb2)[0]
-        best_idx = scores.argmax()
-        similarity = scores[best_idx] * 100
+    for index, emb in enumerate(embeddings_1):
+        similarity_scores = cosine_similarity([emb], embeddings_2)[0]
+        best_match_index = similarity_scores.argmax()
+        similarity = similarity_scores[best_match_index] * 100
 
         if similarity >= threshold:
-            matches.append({
-                "sentence_1": s1[i],
-                "sentence_2": s2[best_idx],
+            results.append({
+                "sentence_1": sentences_1[index],
+                "sentence_2": sentences_2[best_match_index],
                 "score": round(similarity, 2)
             })
 
-    return matches
+    return results
 
 
-# ================== FILE UPLOAD SECTION ==================
-st.markdown('<div class="glass">', unsafe_allow_html=True)
-st.subheader("📂 Upload Your Documents")
+# ---------------------------------------------------------
+# PDF REPORT GENERATION FUNCTION
+# ---------------------------------------------------------
 
-c1, c2 = st.columns(2)
-with c1:
-    file1 = st.file_uploader("Document 1", type=["pdf", "txt"])
-with c2:
-    file2 = st.file_uploader("Document 2", type=["pdf", "txt"])
+def generate_pdf_report(similarity, grade, stats, matches):
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(buffer, pagesize=A4)
 
-st.markdown('</div>', unsafe_allow_html=True)
+    styles = getSampleStyleSheet()
+    content = []
+
+    content.append(Paragraph("<b>AI Plagiarism Detection Report</b>", styles["Title"]))
+    content.append(Spacer(1, 12))
+
+    content.append(Paragraph(f"Date: {datetime.now()}", styles["Normal"]))
+    content.append(Paragraph(f"Similarity Score: {similarity:.2f}%", styles["Normal"]))
+    content.append(Paragraph(f"Grade: {grade}", styles["Normal"]))
+    content.append(Spacer(1, 12))
+
+    table_data = [["Metric", "Value"]]
+    for key, value in stats.items():
+        table_data.append([key, str(value)])
+
+    content.append(Table(table_data))
+    content.append(Spacer(1, 12))
+
+    for match in matches:
+        content.append(
+            Paragraph(
+                f"<b>{match['score']}%</b><br/>"
+                f"{match['sentence_1']}<br/>"
+                f"Matched With: {match['sentence_2']}",
+                styles["Normal"]
+            )
+        )
+        content.append(Spacer(1, 10))
+
+    document.build(content)
+    buffer.seek(0)
+    return buffer
 
 
-# ================== ANALYSIS SETTINGS ==================
-st.markdown('<div class="glass">', unsafe_allow_html=True)
-threshold = st.slider(
-    "Sentence Similarity Threshold (%)",
-    50, 90, 75, 5,
-    help="Higher value = stricter plagiarism detection"
+# ---------------------------------------------------------
+# APPLICATION TABS
+# ---------------------------------------------------------
+
+home_tab, analyze_tab, result_tab = st.tabs(
+    ["🏠 Home", "🔍 Analyze", "📊 Results"]
 )
-st.markdown('</div>', unsafe_allow_html=True)
 
 
-# ================== MAIN ANALYSIS ==================
-if st.button("🔍 Analyze Plagiarism"):
+# ---------------------------------------------------------
+# HOME TAB CONTENT
+# ---------------------------------------------------------
 
-    if not file1 or not file2:
-        st.warning("Please upload both documents to continue.")
-    else:
-        progress = st.progress(0)
-        for i in range(0, 101, 10):
-            time.sleep(0.04)
-            progress.progress(i)
-
-        text1 = extract_text(file1)
-        text2 = extract_text(file2)
-
-        similarity_score = cosine_similarity(
-            model.encode([preprocess_text(text1)]),
-            model.encode([preprocess_text(text2)])
-        )[0][0] * 100
-
-        tabs = st.tabs(["📊 Overview", "📄 Details", "🧠 Sentence Matches"])
-
-        with tabs[0]:
-            st.markdown(f"""
-            <div class="glass">
-                <h2>{similarity_score:.2f}% Similarity</h2>
-                <h4>{plagiarism_grade(similarity_score)}</h4>
-            </div>
-            """, unsafe_allow_html=True)
-
-            st.info(status_badge(similarity_score))
-            st.progress(int(similarity_score))
-
-        with tabs[1]:
-            st.write("📄 Document 1 words:", len(text1.split()))
-            st.write("📄 Document 2 words:", len(text2.split()))
-            st.write("🎯 Threshold:", threshold, "%")
-
-        with tabs[2]:
-            matches = sentence_level_matches(text1, text2, threshold)
-            if matches:
-                for m in matches:
-                    st.markdown(f"""
-                    <div class="glass">
-                        <b>{m['score']}%</b><br><br>
-                        <b>Sentence:</b><br><i>{m['sentence_1']}</i><br><br>
-                        <b>Matched With:</b><br><i>{m['sentence_2']}</i>
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.success("No significant sentence-level plagiarism detected.")
+with home_tab:
+    st.markdown("""
+    <div class="glass" style="text-align:center;">
+        <h1>AI-Powered Plagiarism Detection System</h1>
+        <p>
+        This system detects copied and paraphrased content using
+        <b>Deep Learning, NLP and Explainable AI</b>.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
-st.divider()
-st.markdown(
-    "<p style='text-align:center;'>AI-Powered Plagiarism Detection System • Built using NLP & Deep Learning</p>",
-    unsafe_allow_html=True
-)
+# ---------------------------------------------------------
+# ANALYZE TAB CONTENT
+# ---------------------------------------------------------
+
+with analyze_tab:
+    st.markdown('<div class="glass">', unsafe_allow_html=True)
+
+    file_1 = st.file_uploader("📄 Upload Document 1 (PDF / TXT)", ["pdf", "txt"])
+    file_2 = st.file_uploader("📄 Upload Document 2 (PDF / TXT)", ["pdf", "txt"])
+
+    threshold = st.slider("Similarity Threshold (%)", 50, 90, 75, 5)
+
+    analyze_button = st.button("🔍 Analyze Plagiarism")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------
+# RESULTS TAB LOGIC
+# ---------------------------------------------------------
+
+if analyze_button and file_1 and file_2:
+
+    progress = st.progress(0)
+    for i in range(0, 101, 10):
+        time.sleep(0.03)
+        progress.progress(i)
+
+    # Read files
+    text_1 = extract_text_from_pdf(file_1) if file_1.type == "application/pdf" else file_1.read().decode()
+    text_2 = extract_text_from_pdf(file_2) if file_2.type == "application/pdf" else file_2.read().decode()
+
+    # Calculate similarity
+    similarity_score = cosine_similarity(
+        bert_model.encode([preprocess_text(text_1)]),
+        bert_model.encode([preprocess_text(text_2)])
+    )[0][0] * 100
+
+    grade, color_class = get_plagiarism_grade(similarity_score)
+    matches = sentence_level_comparison(text_1, text_2, threshold)
+
+    stats = {
+        "Words in Document 1": len(text_1.split()),
+        "Words in Document 2": len(text_2.split()),
+        "Plagiarized Sentences": len(matches)
+    }
+
+    with result_tab:
+        st.markdown(f"""
+        <div class="glass" style="text-align:center;">
+            <h1>{similarity_score:.2f}%</h1>
+            <h3 class="{color_class}">Grade {grade}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("### 📊 Document Statistics")
+        st.json(stats)
+
+        st.markdown("### 🔎 Sentence-Level Matches")
+        for index, match in enumerate(matches, 1):
+            with st.expander(f"Match {index} - {match['score']}%"):
+                st.write("Sentence 1:", match["sentence_1"])
+                st.write("Matched Sentence:", match["sentence_2"])
+
+        pdf_file = generate_pdf_report(similarity_score, grade, stats, matches)
+        st.download_button("📄 Download Plagiarism Report", pdf_file, "plagiarism_report.pdf")
+
+
+# ---------------------------------------------------------
+# FOOTER
+# ---------------------------------------------------------
+
+st.markdown("""
+<div style="text-align:center; padding:30px; opacity:0.85;">
+<hr>
+<p>🧠 AI Plagiarism Detection System</p>
+<p>Mini Project | Python • NLP • Deep Learning</p>
+</div>
+""", unsafe_allow_html=True)
