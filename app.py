@@ -1,6 +1,6 @@
 # =========================================================
 # AI POWERED PLAGIARISM DETECTION SYSTEM
-# Mini / Final Year Project
+# Mini / Second Year Project
 # =========================================================
 
 
@@ -37,7 +37,6 @@ from reportlab.lib.pagesizes import A4
 
 st.set_page_config(
     page_title="AI Plagiarism Detector",
-    page_icon="🧠",
     layout="wide"
 )
 
@@ -383,7 +382,8 @@ if analyze_button and file_1 and file_2:
 st.markdown("""
 <div style="text-align:center; padding:30px; opacity:0.85;">
 <hr>
-<p>🧠 AI Plagiarism Detection System</p>
+<p>AI Plagiarism Detection System</p>
 <p>Mini Project | Python • NLP • Deep Learning</p>
 </div>
 """, unsafe_allow_html=True)
+
