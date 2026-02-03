@@ -4,6 +4,5 @@ scikit-learn
 sentence-transformers
 torch
 PyPDF2
-streamlit-lottie
-requests
 Pillow
+reportlab
